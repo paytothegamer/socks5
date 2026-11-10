@@ -2,55 +2,74 @@ name: Build SOCKS5 VPN APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code with Submodules
+      - name: CHECKOUT CODE WITH SUBMODULES
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Set up Java JDK 11
+      - name: SET UP JAVA JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '11'
           distribution: 'temurin'
+          java-version: '17'
 
-      - name: Install Android NDK & Accept Licenses
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;21.4.7075529" "ndk;25.2.9519653"
+      - name: SET UP ANDROID SDK & NDK
+        uses: android-actions/setup-android@v3
 
-      - name: Locate and Prepare Gradle Wrapper
+      - name: ACCEPT LICENSES & INSTALL BUILD TOOLS
         run: |
-          # If gradlew is in a subdirectory, bring it up or find it
-          if [ ! -f "./gradlew" ]; then
-            FIND_GRADLEW=$(find . -maxdepth 3 -name "gradlew" | head -n 1)
-            if [ -n "$FIND_GRADLEW" ]; then
-              echo "Found gradlew in $FIND_GRADLEW, copying to root..."
-              cp "$FIND_GRADLEW" ./gradlew
-            else
-              echo "Installing gradle to generate wrapper..."
-              sudo apt-get update && sudo apt-get install -y gradle
-              gradle wrapper || true
-            fi
+          yes | sdkmanager --licenses || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+
+      - name: PREPARE GRADLE ENVIRONMENT & PERMISSIONS
+        run: |
+          echo "Current working directory:"
+          pwd
+          ls -la
+
+          # Locate gradlew across the repo or submodules
+          GRADLEW_FILE=$(find . -name "gradlew" | head -n 1)
+
+          if [ -n "$GRADLEW_FILE" ]; then
+            echo "Found gradlew at: $GRADLEW_FILE"
+            chmod +x "$GRADLEW_FILE"
+            TARGET_DIR=$(dirname "$GRADLEW_FILE")
+            echo "TARGET_DIR=$TARGET_DIR" >> $GITHUB_ENV
+          else
+            echo "gradlew not found. Generating fresh Gradle wrapper..."
+            sudo apt-get update -qq && sudo apt-get install -y -qq gradle
+            gradle wrapper
+            chmod +x gradlew
+            echo "TARGET_DIR=." >> $GITHUB_ENV
           fi
-          chmod +x ./gradlew || true
 
-      - name: Build Debug APK
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/21.4.7075529
-          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/21.4.7075529
+      - name: COMPILE DEBUG APK
         run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace || ./gradlew assembleDebug -Dorg.gradle.java.home=$JAVA_HOME_11_X64
+          cd ${{ env.TARGET_DIR }}
+          echo "Building in: $(pwd)"
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Upload Output APK
+      - name: LOCATE AND STAGE BUILT APK
+        run: |
+          mkdir -p output_apk
+          find . -type f -name "*.apk" -exec cp {} output_apk/ \;
+          echo "Staged APKs:"
+          ls -lh output_apk/
+
+      - name: UPLOAD OUTPUT APK AS ARTIFACT
         uses: actions/upload-artifact@v4
         with:
-          name: Socks5-Proxy-VPN-APK
-          path: "**/build/outputs/apk/**/*.apk"
+          name: SOCKS5_VPN_Debug_APK
+          path: output_apk/*.apk
+          retention-days: 7
           
