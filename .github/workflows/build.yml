@@ -17,53 +17,44 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: SET UP JAVA JDK 11 (COMPATIBLE WITH SOCKSDROID AGP)
+      - name: SET UP JAVA JDK 11
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '11'
 
-      - name: ACCEPT ANDROID LICENSES
+      - name: ACCEPT ANDROID SDK LICENSES
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-      - name: INJECT FAST GRADLE WRAPPER (UNDER 3 SECONDS)
+      - name: INJECT FAST GRADLE 6.9 WRAPPER
         run: |
           mkdir -p gradle/wrapper
 
-          # Download official gradle-wrapper.jar directly (bypasses slow apt-get install)
-          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v7.4.2/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
+          # Use Gradle 6.9 wrapper binaries (ideal compatibility with older AGP)
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v6.9.4/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
 
-          # Create gradle-wrapper.properties configured with Gradle 7.4.2
           cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-7.4.2-bin.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-6.9.4-bin.zip
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           EOF
 
-          # Create official POSIX gradlew bootstrap script
-          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v7.4.2/gradlew -o gradlew
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v6.9.4/gradlew -o gradlew
           chmod +x gradlew
-          ls -la gradlew gradle/wrapper/
 
-      - name: COMPILE DEBUG APK
+      - name: AUTO-PATCH DEAD JCENTER & OBSOLETE GROOVY PLUGINS
         run: |
-          echo "Starting compilation with Gradle 7.4.2..."
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          echo "Patching dead repos and removed plugins across build.gradle files..."
 
-      - name: LOCATE AND STAGE BUILT APK
-        run: |
-          mkdir -p output_apk
-          find . -type f -name "*.apk" -exec cp {} output_apk/ \;
-          echo "Staged APKs:"
-          ls -lh output_apk/
+          # Replace defunct jcenter with mavenCentral and google
+          find . -maxdepth 2 -name "build.gradle" -exec sed -i 's/jcenter()/google()\n        mavenCentral()\n        gradlePluginPortal()/g' {} +
 
-      - name: UPLOAD OUTPUT APK AS ARTIFACT
-        uses: actions/upload-artifact@v4
-        with:
-          name: SOCKS5_VPN_Debug_APK
-          path: output_apk/*.apk
-          retention-days: 7
+          # Remove the dead org.codehaus.groovy plugin classpath
+          find . -maxdepth 2 -name "build.gradle" -exec sed -i '/gradle-groovy-android-plugin/d' {} +
+
+          # Remove apply plugin: 'groovyx.grooid.groovy-android' if present
+          find . -maxdepth 2 -name "
           
