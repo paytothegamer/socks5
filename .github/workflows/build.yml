@@ -23,73 +23,73 @@ jobs:
           distribution: 'temurin'
           java-version: '11'
 
-      - name: ACCEPT ANDROID LICENSES
+      - name: ACCEPT ANDROID SDK LICENSES
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-      - name: INJECT FAST GRADLE 6.9 WRAPPER
+      - name: INJECT COMPATIBLE GRADLE 6.5 WRAPPER
         run: |
           mkdir -p gradle/wrapper
 
-          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v6.9.4/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
+          # Use official Gradle 6.5.1 wrapper (the most stable match for legacy AGP 3.x/4.x)
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v6.5.1/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
 
           cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-6.9.4-bin.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-6.5.1-bin.zip
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           EOF
 
-          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v6.9.4/gradlew -o gradlew
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v6.5.1/gradlew -o gradlew
           chmod +x gradlew
 
-      - name: AUTO-PATCH REPOSITORIES & OBSOLETE GROOVY PLUGIN
+      - name: PATCH BUILD CONFIGURATION & REMOVE OBSOLETE TEST PLUGINS
         run: |
-          echo "Patching Gradle build scripts..."
           python3 - << 'EOF'
           import os
 
-          # 1. Patch root build.gradle
           for root, dirs, files in os.walk("."):
               for file in files:
                   if file.endswith(".gradle"):
                       filepath = os.path.join(root, file)
                       with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                          content = f.read()
+                          lines = f.readlines()
 
-                      # Ensure gradlePluginPortal() is present for legacy plugin resolution
-                      patched = content
-                      if "repositories {" in patched:
-                          patched = patched.replace("repositories {", "repositories {\n        gradlePluginPortal()\n        google()\n        mavenCentral()")
+                      new_lines = []
+                      for line in lines:
+                          # 1. Completely strip dead Groovy test plugins from build.gradle
+                          if any(bad in line for bad in ["gradle-groovy-android-plugin", "groovyx.grooid.groovy-android", "groovy-android"]):
+                              continue
 
-                      # Neutralize obsolete groovy android plugin that breaks on modern networks
-                      lines = []
-                      for line in patched.splitlines():
-                          if "gradle-groovy-android-plugin" in line or "groovyx.grooid.groovy-android" in line:
-                              lines.append("// " + line)
-                          else:
-                              lines.append(line)
-                      patched = "\n".join(lines)
+                          # 2. Add fallback repositories so build plugins and dependencies resolve
+                          if "repositories {" in line:
+                              new_lines.append(line)
+                              new_lines.append("        google()\n")
+                              new_lines.append("        mavenCentral()\n")
+                              new_lines.append("        gradlePluginPortal()\n")
+                              continue
 
-                      if patched != content:
-                          with open(filepath, "w", encoding="utf-8") as f:
-                              f.write(patched)
-                          print(f"Patched: {filepath}")
+                          new_lines.append(line)
 
-          print("All build scripts successfully configured.")
+                      with open(filepath, "w", encoding="utf-8") as f:
+                          f.writelines(new_lines)
+                      print(f"Configured: {filepath}")
+
+          print("Build scripts cleaned successfully.")
           EOF
 
-      - name: COMPILE DEBUG APK (BYPASS UNUSED TESTS)
+      - name: COMPILE DEBUG APK
         run: |
-          echo "Compiling APK..."
-          ./gradlew assembleDebug -x test --no-daemon --stacktrace
+          echo "Starting build on Gradle 6.5.1..."
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: LOCATE AND STAGE BUILT APK
         run: |
           mkdir -p output_apk
           find . -type f -name "*.apk" -exec cp {} output_apk/ \;
-          echo "Generated APK files:"
+          echo "Staged APKs:"
           ls -lh output_apk/
 
       - name: UPLOAD OUTPUT APK AS ARTIFACT
