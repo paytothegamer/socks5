@@ -23,7 +23,7 @@ jobs:
           distribution: 'temurin'
           java-version: '11'
 
-      - name: ACCEPT ANDROID SDK LICENSES
+      - name: ACCEPT ANDROID LICENSES
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
@@ -31,9 +31,10 @@ jobs:
         run: |
           mkdir -p gradle/wrapper
 
-          # Use Gradle 6.9 wrapper binaries (ideal compatibility with older AGP)
+          # Download official gradle-wrapper.jar
           curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v6.9.4/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
 
+          # Create wrapper properties pointing to Gradle 6.9.4
           cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -42,19 +43,51 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
 
+          # Download official gradlew script
           curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v6.9.4/gradlew -o gradlew
           chmod +x gradlew
+          ls -la gradlew gradle/wrapper/
 
-      - name: AUTO-PATCH DEAD JCENTER & OBSOLETE GROOVY PLUGINS
+      - name: AUTO-PATCH DEAD REPOSITORIES SAFELY
         run: |
-          echo "Patching dead repos and removed plugins across build.gradle files..."
+          echo "Patching build files with Python to prevent bash quoting errors..."
+          python3 - << 'EOF'
+          import os
 
-          # Replace defunct jcenter with mavenCentral and google
-          find . -maxdepth 2 -name "build.gradle" -exec sed -i 's/jcenter()/google()\n        mavenCentral()\n        gradlePluginPortal()/g' {} +
+          for root, dirs, files in os.walk("."):
+              for file in files:
+                  if file.endswith(".gradle"):
+                      filepath = os.path.join(root, file)
+                      with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                          content = f.read()
 
-          # Remove the dead org.codehaus.groovy plugin classpath
-          find . -maxdepth 2 -name "build.gradle" -exec sed -i '/gradle-groovy-android-plugin/d' {} +
+                      # Replace dead jcenter() with mavenCentral()
+                      patched = content.replace("jcenter()", "mavenCentral()")
 
-          # Remove apply plugin: 'groovyx.grooid.groovy-android' if present
-          find . -maxdepth 2 -name "
+                      if patched != content:
+                          with open(filepath, "w", encoding="utf-8") as f:
+                              f.write(patched)
+                          print(f"Patched repositories in: {filepath}")
+
+          print("Build scripts successfully patched.")
+          EOF
+
+      - name: COMPILE DEBUG APK
+        run: |
+          echo "Compiling APK with Gradle 6.9..."
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: LOCATE AND STAGE BUILT APK
+        run: |
+          mkdir -p output_apk
+          find . -type f -name "*.apk" -exec cp {} output_apk/ \;
+          echo "Staged APK files:"
+          ls -lh output_apk/
+
+      - name: UPLOAD OUTPUT APK AS ARTIFACT
+        uses: actions/upload-artifact@v4
+        with:
+          name: SOCKS5_VPN_Debug_APK
+          path: output_apk/*.apk
+          retention-days: 7
           
