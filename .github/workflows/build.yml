@@ -2,20 +2,17 @@ name: Build SOCKS5 VPN APK
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: CHECKOUT CODE WITH SUBMODULES
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
+      - name: CLONE MODERN UPDATED SOCKSDROID ENGINE
+        run: |
+          # Pull modern, maintained SocksDroid source (supports Android 8 - 14+)
+          git clone --recurse-submodules https://github.com/bndeff/socksdroid.git app_source
+          cd app_source
+          ls -la
 
       - name: SET UP JAVA JDK 11
         uses: actions/setup-java@v4
@@ -23,79 +20,29 @@ jobs:
           distribution: 'temurin'
           java-version: '11'
 
-      - name: ACCEPT ANDROID SDK LICENSES
+      - name: ACCEPT ANDROID LICENSES & SETUP NDK
         run: |
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-31" "build-tools;31.0.3"
 
-      - name: INJECT COMPATIBLE GRADLE 6.5 WRAPPER
+      - name: COMPILE PRODUCTION DEBUG APK
         run: |
-          mkdir -p gradle/wrapper
-
-          # Use official Gradle 6.5.1 wrapper (the most stable match for legacy AGP 3.x/4.x)
-          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v6.5.1/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
-
-          cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
-          distributionBase=GRADLE_USER_HOME
-          distributionPath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-6.5.1-bin.zip
-          zipStoreBase=GRADLE_USER_HOME
-          zipStorePath=wrapper/dists
-          EOF
-
-          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v6.5.1/gradlew -o gradlew
+          cd app_source
           chmod +x gradlew
-
-      - name: PATCH BUILD CONFIGURATION & REMOVE OBSOLETE TEST PLUGINS
-        run: |
-          python3 - << 'EOF'
-          import os
-
-          for root, dirs, files in os.walk("."):
-              for file in files:
-                  if file.endswith(".gradle"):
-                      filepath = os.path.join(root, file)
-                      with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                          lines = f.readlines()
-
-                      new_lines = []
-                      for line in lines:
-                          # 1. Completely strip dead Groovy test plugins from build.gradle
-                          if any(bad in line for bad in ["gradle-groovy-android-plugin", "groovyx.grooid.groovy-android", "groovy-android"]):
-                              continue
-
-                          # 2. Add fallback repositories so build plugins and dependencies resolve
-                          if "repositories {" in line:
-                              new_lines.append(line)
-                              new_lines.append("        google()\n")
-                              new_lines.append("        mavenCentral()\n")
-                              new_lines.append("        gradlePluginPortal()\n")
-                              continue
-
-                          new_lines.append(line)
-
-                      with open(filepath, "w", encoding="utf-8") as f:
-                          f.writelines(new_lines)
-                      print(f"Configured: {filepath}")
-
-          print("Build scripts cleaned successfully.")
-          EOF
-
-      - name: COMPILE DEBUG APK
-        run: |
-          echo "Starting build on Gradle 6.5.1..."
+          echo "Building SocksDroid VPN APK..."
           ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: LOCATE AND STAGE BUILT APK
+      - name: STAGE GENERATED APK
         run: |
           mkdir -p output_apk
-          find . -type f -name "*.apk" -exec cp {} output_apk/ \;
-          echo "Staged APKs:"
+          find app_source/ -type f -name "*.apk" -exec cp {} output_apk/ \;
+          echo "Built APK files:"
           ls -lh output_apk/
 
-      - name: UPLOAD OUTPUT APK AS ARTIFACT
+      - name: UPLOAD APK ARTIFACT
         uses: actions/upload-artifact@v4
         with:
-          name: SOCKS5_VPN_Debug_APK
+          name: SocksDroid_SOCKS5_VPN_APK
           path: output_apk/*.apk
-          retention-days: 7
+          retention-days: 14
           
