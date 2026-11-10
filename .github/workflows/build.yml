@@ -17,50 +17,47 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: SET UP JAVA JDK 17
+      - name: SET UP JAVA JDK 11 (COMPATIBLE WITH SOCKSDROID AGP)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '11'
 
-      - name: ACCEPT LICENSES ON PRE-INSTALLED ANDROID SDK
+      - name: ACCEPT ANDROID LICENSES
         run: |
-          # Use pre-installed Android SDK on GitHub runner
-          echo "ANDROID_HOME: $ANDROID_HOME"
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-      - name: PREPARE GRADLE ENVIRONMENT & PERMISSIONS
+      - name: INJECT FAST GRADLE WRAPPER (UNDER 3 SECONDS)
         run: |
-          pwd
-          ls -la
+          mkdir -p gradle/wrapper
 
-          # Find gradlew in repo root or subfolders
-          GRADLEW_FILE=$(find . -name "gradlew" | head -n 1)
+          # Download official gradle-wrapper.jar directly (bypasses slow apt-get install)
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v7.4.2/gradle/wrapper/gradle-wrapper.jar -o gradle/wrapper/gradle-wrapper.jar
 
-          if [ -n "$GRADLEW_FILE" ]; then
-            echo "Found gradlew at: $GRADLEW_FILE"
-            chmod +x "$GRADLEW_FILE"
-            TARGET_DIR=$(dirname "$GRADLEW_FILE")
-            echo "TARGET_DIR=$TARGET_DIR" >> $GITHUB_ENV
-          else
-            echo "Generating fresh Gradle wrapper..."
-            sudo apt-get update -qq && sudo apt-get install -y -qq gradle
-            gradle wrapper
-            chmod +x gradlew
-            echo "TARGET_DIR=." >> $GITHUB_ENV
-          fi
+          # Create gradle-wrapper.properties configured with Gradle 7.4.2
+          cat << 'EOF' > gradle/wrapper/gradle-wrapper.properties
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-7.4.2-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
+
+          # Create official POSIX gradlew bootstrap script
+          curl -fsSL https://raw.githubusercontent.com/gradle/gradle/v7.4.2/gradlew -o gradlew
+          chmod +x gradlew
+          ls -la gradlew gradle/wrapper/
 
       - name: COMPILE DEBUG APK
         run: |
-          cd ${{ env.TARGET_DIR }}
-          echo "Building in: $(pwd)"
+          echo "Starting compilation with Gradle 7.4.2..."
           ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: LOCATE AND STAGE BUILT APK
         run: |
           mkdir -p output_apk
           find . -type f -name "*.apk" -exec cp {} output_apk/ \;
-          echo "Generated APKs:"
+          echo "Staged APKs:"
           ls -lh output_apk/
 
       - name: UPLOAD OUTPUT APK AS ARTIFACT
